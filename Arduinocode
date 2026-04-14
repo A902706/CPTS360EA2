@@ -1,0 +1,151 @@
+#include <SoftwareSerial.h>
+#include <LedControl.h> 
+
+// LCD serial pins 
+SoftwareSerial mySerial(3, 4); 
+
+// Moisture Sensor settings
+int thresholdUp = 400;   // These are low just for testing purposes. 
+int thresholdDown = 250;  
+int soilPin = A0;
+int soilPower = 8;
+
+// Pump vars 
+int motor1pin1 = 2; 
+int motor1pin2 = 3; 
+int motor1speed = 7; 
+
+// Track the current water cycle
+bool isWatering = false;
+
+// LED Matrix Setup
+LedControl lc = LedControl(11, 13, 10, 2); 
+
+byte pattern[8][2] = {
+  {B11111111, B11111111}, {B11111111, B11111111}, 
+  {B11111111, B11111111}, {B11111111, B11111111}, 
+  {B11111111, B11111111}, {B11111111, B11111111}, 
+  {B11111111, B11111111}, {B11111111, B11111111} 
+}; 
+
+// Set up
+void setup() {
+  mySerial.begin(9600); 
+  delay(1000);
+
+  // Soil sensor
+  pinMode(soilPower, OUTPUT);
+  digitalWrite(soilPower, LOW);
+
+  // Motor pins
+  pinMode(motor1pin1, OUTPUT); 
+  pinMode(motor1pin2, OUTPUT); 
+  pinMode(motor1speed, OUTPUT); 
+
+  // Start the pump off
+  digitalWrite(motor1pin1, LOW);
+  digitalWrite(motor1pin2, LOW);
+  analogWrite(motor1speed, 0);
+
+  // LCD stuff
+  mySerial.write(0xFE); mySerial.write(0x01); delay(500); // Clear
+  mySerial.write(0xFE); mySerial.write(0x0C); delay(100); // Cursor Off
+  mySerial.write(0xFE); mySerial.write(0x14); delay(100); // No Scroll
+  mySerial.write(0xFE); mySerial.write(0x06);             // left to right
+
+  // Init the matrix
+  for (int i = 0; i < 2; i++) { 
+    lc.shutdown(i, false); 
+    lc.setIntensity(i, 8); 
+    lc.clearDisplay(i); 
+  } 
+
+  for (int row = 0; row < 8; row++) { 
+    lc.setRow(0, row, pattern[row][0]); 
+    lc.setRow(1, row, pattern[row][1]); 
+  } 
+}
+
+//  COde loop
+void loop() {
+  int sensorValue = readSoil(); // Read the soil level
+  String statusMsg; // Display msg
+  
+  // Determine if pump will turn on or off.
+  if (sensorValue < thresholdDown) {
+    isWatering = true; 
+  }
+  
+  if (sensorValue >= thresholdUp) {
+    isWatering = false; 
+
+    // Safe guard for pump make sure its off
+    digitalWrite(motor1pin1, LOW); 
+    digitalWrite(motor1pin2, LOW);
+    analogWrite(motor1speed, 0);
+  }
+
+  // If watering status is true 
+  if (isWatering) {
+    statusMsg = "Dry, Pumping..."; // Display msg
+    updateRow1(sensorValue);
+    updateRow2(statusMsg);
+
+    // Turn pump on
+    analogWrite(motor1speed, 1000); // Change motor speed here
+    digitalWrite(motor1pin1, HIGH); 
+    digitalWrite(motor1pin2, LOW); 
+    delay(12000); // For bursts of water increase/decrease depending on how long ur hose is and also how strong ur pump is.
+    
+    // Turn pump off
+    digitalWrite(motor1pin1, LOW); 
+    digitalWrite(motor1pin2, LOW);
+    analogWrite(motor1speed, 0);
+    
+    // Update status
+    statusMsg = "Wait, Soaking..";
+    updateRow2(statusMsg);
+    delay(5000); // Not necesary tbh but just let the water finish dripping.
+  } 
+  else {
+
+    // Display soil status to LCD
+    if (sensorValue >= thresholdUp) {
+      statusMsg = "Wet dont water.";
+    } else {
+      statusMsg = "Moist, just perfect.";
+    }
+    updateRow1(sensorValue);
+    updateRow2(statusMsg);
+    delay(1000); 
+  }
+}
+
+// LCD Row 1
+void updateRow1(int val) {
+  char line[17]; //17 line character array enough for the null character at end.
+  snprintf(line, 17, "Water:%4d      ", val); // 16 chars long to fit display
+  mySerial.write(0xFE); // Write at the first row column 1
+  mySerial.write(0x80); 
+  delay(50); 
+  mySerial.print(line); // Display to LCD
+}
+
+// LCD Row 2 similar to row 1 just going to row 2 column 1
+void updateRow2(String msg) {
+  char line[17];
+  snprintf(line, 17, "%-16.16s", msg.c_str());
+  mySerial.write(0xFE);
+  mySerial.write(192); 
+  delay(50); 
+  mySerial.print(line);
+}
+
+// Soil sensor reading
+int readSoil() {
+  digitalWrite(soilPower, HIGH); // Power the sensor.
+  delay(150); 
+  int val = analogRead(soilPin); // Read value
+  digitalWrite(soilPower, LOW); // Power off the sensor.
+  return val; // return the value.
+}
